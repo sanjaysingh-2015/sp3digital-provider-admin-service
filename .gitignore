@@ -1,0 +1,6 @@
+.env
+node_modules/
+*.pem
+
+# N-Mod EXT ignore file
+.nmodignore
