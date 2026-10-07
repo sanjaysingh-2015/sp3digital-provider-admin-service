@@ -17,14 +17,47 @@ const { providerCode, yearsSince } = require('../utils/code.util');
 const { httpError, providerNotFound } = require('../utils/errors');
 const { validateProfileShape, LICENSED_TYPES } = require('../validations/provider.validation');
 const { validateReferences } = require('../clients/organizationDirectory');
+const { resolveAddress } = require('../clients/geographyDirectory');
 
 const PROFILE_FIELDS = [
   'providerType', 'systemOfMedicine', 'userId', 'title', 'firstName', 'middleName', 'lastName', 'displayName',
   'gender', 'dateOfBirth', 'nationality', 'photoUrl', 'bio', 'email', 'phoneCountryCode', 'phoneNumber',
-  'alternatePhoneNumber', 'emergencyContactName', 'emergencyContactPhone', 'addressLine1', 'addressLine2', 'city',
+  'alternatePhoneNumber', 'emergencyContactName', 'emergencyContactPhone', 'addressLine1', 'addressLine2', 'countryId', 'stateId', 'districtId', 'subDistrictId', 'cityId', 'postalCodeId', 'city',
   'subDistrictName', 'districtName', 'stateName', 'countryName', 'postalCode', 'hprId', 'practiceStartDate',
   'memberships', 'awards', 'idProofType', 'idProofLast4',
 ];
+// Geography ids the browser sends -> the denormalized name column the service fills in.
+const GEO_NAME_COLUMN = {
+  countryId: 'countryName',
+  stateId: 'stateName',
+  districtId: 'districtName',
+  subDistrictId: 'subDistrictName',
+  cityId: 'city',
+  postalCodeId: 'postalCode',
+};
+
+/**
+ * When any geography id is sent, validate the whole effective chain (patch laid
+ * over the stored ids) and return the id + name columns to write. Names for
+ * levels that are not set are cleared, so ids and names can never disagree.
+ */
+async function resolveGeoColumns(patch, stored, ctx) {
+  const touched = Object.keys(GEO_NAME_COLUMN).some((key) => patch[key] !== undefined);
+  if (!touched) return {};
+  const effective = {};
+  for (const key of Object.keys(GEO_NAME_COLUMN)) {
+    effective[key] = patch[key] !== undefined ? patch[key] : (stored ? stored[key] : null) ?? null;
+  }
+  const names = await resolveAddress(effective, ctx);
+  if (names === null) return {}; // geography check not configured — keep what was sent
+  const columns = {};
+  for (const [key, nameColumn] of Object.entries(GEO_NAME_COLUMN)) {
+    columns[key] = effective[key] || null;
+    columns[nameColumn] = names[key] ?? null;
+  }
+  return columns;
+}
+
 const NAME_PARTS = ['title', 'firstName', 'middleName', 'lastName'];
 const SORTABLE = { displayName: 'displayName', createdOn: 'createdOn', providerCode: 'providerCode', status: 'status', providerType: 'providerType' };
 
@@ -153,6 +186,7 @@ class ProviderService {
     const { tenantUuid, userId } = ctx;
 
     await findDuplicateRegistration(tenantUuid, payload.registrations);
+    const geoColumns = await resolveGeoColumns(payload, null, ctx);
     for (const affiliation of payload.affiliations || []) {
       await validateReferences({ token: ctx.token, ...affiliation });
     }
@@ -162,6 +196,7 @@ class ProviderService {
       providerId = await sequelize.transaction(async (transaction) => {
         const values = {};
         for (const field of PROFILE_FIELDS) if (payload[field] !== undefined) values[field] = blankToNull(payload[field]);
+        Object.assign(values, geoColumns);
         values.displayName = values.displayName || buildDisplayName(payload);
 
         const provider = await Provider.create(
@@ -357,6 +392,7 @@ class ProviderService {
 
     const changes = {};
     for (const field of PROFILE_FIELDS) if (patch[field] !== undefined) changes[field] = blankToNull(patch[field]);
+    Object.assign(changes, await resolveGeoColumns(patch, provider, ctx));
     // Re-derive the display name only when a name part changed and the caller
     // didn't supply their own display name.
     if (patch.displayName === undefined && NAME_PARTS.some((k) => patch[k] !== undefined)) {

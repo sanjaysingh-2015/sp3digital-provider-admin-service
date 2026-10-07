@@ -32,6 +32,14 @@ module.exports = (sequelize, DataTypes) => {
 
       addressLine1: str('address_line1', 255),
       addressLine2: str('address_line2', 255),
+      // organization-admin-service geography ids — cross-database, no FK. The
+      // name columns below are filled by the service from these ids.
+      countryId: { type: DataTypes.BIGINT, allowNull: true, field: 'country_id' },
+      stateId: { type: DataTypes.BIGINT, allowNull: true, field: 'state_id' },
+      districtId: { type: DataTypes.BIGINT, allowNull: true, field: 'district_id' },
+      subDistrictId: { type: DataTypes.BIGINT, allowNull: true, field: 'sub_district_id' },
+      cityId: { type: DataTypes.BIGINT, allowNull: true, field: 'city_id' },
+      postalCodeId: { type: DataTypes.BIGINT, allowNull: true, field: 'postal_code_id' },
       city: str('city', 100),
       subDistrictName: str('sub_district_name', 100),
       districtName: str('district_name', 100),

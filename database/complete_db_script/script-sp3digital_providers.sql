@@ -64,9 +64,19 @@ CREATE TABLE `providers` (
   `emergency_contact_name` varchar(150) DEFAULT NULL,
   `emergency_contact_phone` varchar(20) DEFAULT NULL,
 
-  -- address (same shape as organization-admin-service's facilities)
+  -- address. The *_id columns point into organization-admin-service's geography
+  -- tables (cross-database, no FK) — the same ids Organizations and Facilities
+  -- store. The name columns are copies the SERVICE fills in from those ids (and
+  -- checks that they form a valid country > state > district > sub-district >
+  -- city > postal-code chain), so lists and search don't need a geography lookup.
   `address_line1` varchar(255) DEFAULT NULL,
   `address_line2` varchar(255) DEFAULT NULL,
+  `country_id` bigint unsigned DEFAULT NULL,
+  `state_id` bigint unsigned DEFAULT NULL,
+  `district_id` bigint unsigned DEFAULT NULL,
+  `sub_district_id` bigint unsigned DEFAULT NULL,
+  `city_id` bigint unsigned DEFAULT NULL,
+  `postal_code_id` bigint unsigned DEFAULT NULL,
   `city` varchar(100) DEFAULT NULL,
   `sub_district_name` varchar(100) DEFAULT NULL,
   `district_name` varchar(100) DEFAULT NULL,

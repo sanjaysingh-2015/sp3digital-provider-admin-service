@@ -267,3 +267,76 @@ test('organization / facility ids are verified against organization-admin-servic
     await new Promise((resolve) => orgService.close(resolve));
   }
 });
+
+test('address uses the geography ids: names are filled in server-side and the chain is validated', async () => {
+  const seen = [];
+  const geo = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    seen.push({ path: url.pathname, authorization: req.headers.authorization, tenant: req.headers['x-tenant-uuid'] });
+    const q = (name) => Number(url.searchParams.get(name));
+    const send = (rows) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true, data: rows })); };
+    switch (url.pathname) {
+      case '/geography/countries': return send([{ countryId: 104, name: 'India' }]);
+      case '/geography/states': return send(q('countryId') === 104 ? [{ stateId: 7, name: 'Uttar Pradesh' }, { stateId: 8, name: 'Punjab' }] : []);
+      case '/geography/districts': return send(q('stateId') === 7 ? [{ districtId: 70, name: 'Saharanpur' }] : q('stateId') === 8 ? [{ districtId: 80, name: 'Ludhiana' }] : []);
+      case '/geography/sub-districts': return send(q('districtId') === 70 ? [{ subDistrictId: 700, name: 'Saharanpur Tehsil' }] : []);
+      case '/geography/cities': return send(q('subDistrictId') === 700 ? [{ cityId: 7000, name: 'Saharanpur' }] : []);
+      case '/geography/postal-codes': return send(q('cityId') === 7000 ? [{ postalCodeId: 70000, code: '247001' }] : []);
+      default: res.writeHead(404); return res.end();
+    }
+  });
+  await new Promise((resolve) => geo.listen(0, resolve));
+  process.env.ORGANIZATION_SERVICE_URL = `http://127.0.0.1:${geo.address().port}`;
+  process.env.ORGANIZATION_SERVICE_INTERNAL_TOKEN = 'internal-geo-token';
+
+  const chain = { countryId: 104, stateId: 7, districtId: 70, subDistrictId: 700, cityId: 7000, postalCodeId: 70000 };
+  try {
+    const ok = await call('POST', '/providers', {
+      token: adminA,
+      body: doctor({ firstName: 'Geo', registrations: [{ registrationBody: 'NMC', registrationNumber: 'NMC-4004' }], ...chain }),
+    });
+    assert.equal(ok.status, 201, JSON.stringify(ok.json));
+    assert.deepEqual(
+      [ok.json.countryName, ok.json.stateName, ok.json.districtName, ok.json.subDistrictName, ok.json.city, ok.json.postalCode],
+      ['India', 'Uttar Pradesh', 'Saharanpur', 'Saharanpur Tehsil', 'Saharanpur', '247001'],
+    );
+    assert.equal(ok.json.cityId, 7000);
+    // the geography service gets the internal token + the caller's tenant — never the user's JWT
+    assert.ok(seen.length >= 6);
+    assert.ok(seen.every((r) => r.authorization === 'Bearer internal-geo-token' && r.tenant === TENANT_A));
+
+    const bad = await call('PATCH', `/providers/${ok.json.providerId}`, { token: adminA, body: { stateId: 8 } }); // district 70 is not in Punjab
+    assert.equal(bad.status, 400);
+    assert.equal(bad.json.error.code, 'INVALID_ADDRESS');
+    assert.match(bad.json.error.message, /District 70 does not belong to the selected state/);
+
+    const orphan = await call('PATCH', `/providers/${ok.json.providerId}`, { token: adminA, body: { subDistrictId: null } }); // city 7000 now has no sub-district
+    assert.equal(orphan.status, 400);
+    assert.match(orphan.json.error.message, /City needs sub-district/);
+
+    const before = seen.length;
+    const plain = await call('PATCH', `/providers/${ok.json.providerId}`, { token: adminA, body: { bio: 'No address change' } });
+    assert.equal(plain.status, 200);
+    assert.equal(seen.length, before); // an edit that doesn't touch the address makes no geography calls
+    assert.equal(plain.json.city, 'Saharanpur');
+
+    const cleared = await call('PATCH', `/providers/${ok.json.providerId}`, { token: adminA, body: { postalCodeId: null, cityId: null, subDistrictId: null } });
+    assert.equal(cleared.status, 200, JSON.stringify(cleared.json));
+    assert.equal(cleared.json.districtName, 'Saharanpur');
+    assert.equal(cleared.json.city, null);
+    assert.equal(cleared.json.subDistrictName, null);
+    assert.equal(cleared.json.postalCode, null);
+    assert.equal(cleared.json.cityId, null);
+
+    const orphanCity = await call('POST', '/providers', {
+      token: adminA,
+      body: doctor({ firstName: 'Orphan', registrations: [{ registrationBody: 'NMC', registrationNumber: 'NMC-4005' }], cityId: 7000 }),
+    });
+    assert.equal(orphanCity.status, 400);
+    assert.equal(orphanCity.json.error.code, 'INVALID_ADDRESS');
+  } finally {
+    delete process.env.ORGANIZATION_SERVICE_URL;
+    delete process.env.ORGANIZATION_SERVICE_INTERNAL_TOKEN;
+    await new Promise((resolve) => geo.close(resolve));
+  }
+});

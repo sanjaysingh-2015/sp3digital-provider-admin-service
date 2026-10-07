@@ -36,6 +36,7 @@ cross-database foreign keys.
 | PHYSICAL needs a facility; REMOTE needs ≥1 channel (VIDEO / AUDIO / CHAT); OTHER needs a subtype; department and services need a facility | `validateAffiliationShape` |
 | Organization / facility / department / facility-service ids are checked against organization-admin-service using the **caller's own token**, so tenant scoping is enforced by that service | `clients/organizationDirectory.js` |
 | At most one primary affiliation and one primary registration per provider | services |
+| Address uses the shared geography reference data: the browser sends only `countryId, stateId, districtId, subDistrictId, cityId, postalCodeId`; the service checks they form a real chain (each level inside the one above) and fills in the names itself, so ids and names can never disagree. Uses `ORGANIZATION_SERVICE_INTERNAL_TOKEN` server-side | `clients/geographyDirectory.js` |
 | Only the **last 4 characters** of an ID proof are stored; documents are links, not files | schema |
 
 ## API (base `/api/v1/provider-admin`)
@@ -67,11 +68,13 @@ mysql -u root -p < database/complete_db_script/script-sp3digital_providers.sql
 # in the identity database:
 mysql -u root -p sp3digital_identity < database/seeds/identity-admin-provider-rbac.sql
 npm run dev                   # http://localhost:3300/docs
-npm test                      # 14 tests, in-memory SQLite, no setup
+# databases created before the geography change: also run
+#   database/complete_db_script/2026-10-07-add-provider-geo-ids.sql
+npm test                      # 15 tests, in-memory SQLite, no setup
 ```
 
 `ADMIN_JWT_*` must be the same values identity-admin-service signs with.
-**Set `ORGANIZATION_SERVICE_URL` in every real environment** — without it the
+**Set `ORGANIZATION_SERVICE_URL` and `ORGANIZATION_SERVICE_INTERNAL_TOKEN` in every real environment** — without it the
 organization / facility ids are accepted unchecked (a warning is logged).
 
 ## Next integration steps
